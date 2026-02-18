@@ -74,7 +74,16 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="rabbitmq_list_queues",
-            description="List all queues in the connected vhost.",
+            description="List all queues in the connected vhost using Management API.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="rabbitmq_list_exchanges",
+            description="List all exchanges in the connected vhost using Management API.",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -378,16 +387,41 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> List[TextContent]:
         
         channel = conn.channel
         
-        # Queue operations
         if name == "rabbitmq_list_queues":
-            result = channel.queue_declare(queue="", exclusive=True, auto_delete=True)
-            # This is a workaround - pika doesn't have a direct list_queues
-            # We'll use passive declares to check queues from config
-            return [TextContent(
-                type="text",
-                text="Note: Direct queue listing requires Management API. "
-                     "Use rabbitmq_queue_message_count to check if a specific queue exists."
-            )]
+            try:
+                queues = conn.list_queues()
+                if not queues:
+                    return [TextContent(type="text", text="No queues found in vhost.")]
+                
+                lines = ["Queues in vhost:\n"]
+                for q in queues:
+                    lines.append(f"  {q['name']}")
+                    lines.append(f"    Type: {q.get('type', 'classic')}")
+                    lines.append(f"    Messages: {q.get('messages', 0)}")
+                    lines.append(f"    Consumers: {q.get('consumers', 0)}")
+                    lines.append(f"    Durable: {q.get('durable', False)}")
+                    lines.append("")
+                return [TextContent(type="text", text="\n".join(lines))]
+            except Exception as e:
+                return [TextContent(type="text", text=f"Failed to list queues: {str(e)}")]
+        
+        elif name == "rabbitmq_list_exchanges":
+            try:
+                exchanges = conn.list_exchanges()
+                if not exchanges:
+                    return [TextContent(type="text", text="No exchanges found in vhost.")]
+                
+                lines = ["Exchanges in vhost:\n"]
+                for ex in exchanges:
+                    name = ex.get('name', '')
+                    if name:
+                        lines.append(f"  {name}")
+                        lines.append(f"    Type: {ex.get('type', 'direct')}")
+                        lines.append(f"    Durable: {ex.get('durable', False)}")
+                        lines.append("")
+                return [TextContent(type="text", text="\n".join(lines))]
+            except Exception as e:
+                return [TextContent(type="text", text=f"Failed to list exchanges: {str(e)}")]
         
         elif name == "rabbitmq_declare_queue":
             queue_name = arguments["queue_name"]

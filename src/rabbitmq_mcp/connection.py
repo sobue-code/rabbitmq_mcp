@@ -2,9 +2,11 @@
 
 import os
 import ssl
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
+import httpx
 import pika
 from loguru import logger
 
@@ -22,6 +24,7 @@ class RabbitMQConfig:
     ca_cert: Optional[str] = field(default_factory=lambda: os.getenv("RABBITMQ_CA_CERT", None))
     heartbeat: int = field(default_factory=lambda: int(os.getenv("RABBITMQ_HEARTBEAT", "3600")))
     socket_timeout: int = field(default_factory=lambda: int(os.getenv("RABBITMQ_SOCKET_TIMEOUT", "5")))
+    management_port: int = field(default_factory=lambda: int(os.getenv("RABBITMQ_MANAGEMENT_PORT", "15672")))
 
 
 class RabbitMQConnection:
@@ -136,3 +139,50 @@ class RabbitMQConnection:
         if self.is_connected():
             return True
         return self.connect()
+    
+    def _get_management_url(self) -> str:
+        """Build Management API base URL."""
+        scheme = "https" if self.config.use_ssl else "http"
+        return f"{scheme}://{self.config.host}:{self.config.management_port}/api"
+    
+    def _get_management_client(self) -> httpx.Client:
+        """Create HTTP client for Management API."""
+        verify: Any = True
+        if self.config.use_ssl and self.config.ca_cert:
+            verify = self.config.ca_cert
+        
+        return httpx.Client(
+            auth=(self.config.user, self.config.password),
+            verify=verify,
+            timeout=10.0
+        )
+    
+    def list_queues(self) -> List[Dict[str, Any]]:
+        """List all queues in the vhost via Management API.
+        
+        Returns:
+            List of queue info dictionaries.
+            
+        Raises:
+            httpx.HTTPError: If API request fails.
+        """
+        url = f"{self._get_management_url()}/queues/{quote(self.config.vhost, safe='')}"
+        with self._get_management_client() as client:
+            response = client.get(url)
+            response.raise_for_status()
+            return response.json()
+    
+    def list_exchanges(self) -> List[Dict[str, Any]]:
+        """List all exchanges in the vhost via Management API.
+        
+        Returns:
+            List of exchange info dictionaries.
+            
+        Raises:
+            httpx.HTTPError: If API request fails.
+        """
+        url = f"{self._get_management_url()}/exchanges/{quote(self.config.vhost, safe='')}"
+        with self._get_management_client() as client:
+            response = client.get(url)
+            response.raise_for_status()
+            return response.json()
